@@ -4,15 +4,27 @@ use File::Basename;
 my $program = basename $0;
 die "
 Estimating the index of tissue specificity based on multi-tissue expression matrix
-Usage: $program <expMatrixFile> <ReplicateMap> <TSICutoff[0.95]>
+Usage: $program <expMatrixFile> <ReplicateMap> <ExpCutoff[1]> <TSICutoff[0.95]>
 
-Note: 
-[expMatrixFile] should be with: [sep=\\t; header=True; GeneID\\tTissue1\\tTissue2...];
-[ReplicateMap] should be with: [Tissue\\tReplicate\\n]
-" unless (@ARGV == 3);
+Note:
+<ExpMatrix> FILE (sep=\\t; header=True; GeneID\\tTissue1\\tTissue2...):
+GeneID	Sample-1	Sample-2 ...
+geneX	1.234	2.345
+...
+	
+<ReplicateMap> FILE:
+Sample-1	TissueX
+Sample-2	TissueX
+Sample-3	TissueY
+
+<ExpCutoff> INT: 1 (for FPKM)
+
+<TSICutoff> FLOAT: 0.95 (for detection of tissue-specific genes)
+" unless (@ARGV == 4);
 
 my $expMatrixFile = shift;
 my $ReplicateMap = shift;
+my $ExpCutoff = shift;
 my $TSICutoff = shift;
 
 my (%hash_map,%hash_group);
@@ -21,8 +33,8 @@ while(<handle>){
 	chomp;
 	my @cols = split(/\t/);
 	if (@cols >= 2){
-		$hash_map{$cols[1]} = $cols[0];
-		$hash_group{$cols[0]}++;
+		$hash_map{$cols[0]} = $cols[1];
+		$hash_group{$cols[1]}++;
 	}
 }
 close handle;
@@ -80,13 +92,19 @@ while(<handle>){
 	my ($geneTSI,$tissueNum);
 	for my $expr (@cols){
 		if($expr ne "NA" and $expr ne ""){
-			$geneTSI += (1-$expr/$exp_max);
+			if ($expr >= $ExpCutoff){
+				$geneTSI += (1-$expr/$exp_max);
+			}else{
+				$geneTSI ++;
+			}
 			$tissueNum++;
 		}
 	}
 	$geneTSI /= ($tissueNum-1);
 	
-	if($geneTSI >=$TSICutoff){
+	if($geneTSI > 1){ #all expression values are less than 1
+		print "$GeneID\tNA\t$exp_max\tNA\n";
+	}elsif($geneTSI >=$TSICutoff){
 		my $idx_max;
 		for my $i (0..$#cols){
 			if($cols[$i] == $exp_max){
