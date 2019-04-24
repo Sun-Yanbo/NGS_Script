@@ -1,12 +1,26 @@
 #!/usr/bin/perl
+################################################
+#Update: 11:36 2019/4/2 ÐÇÆÚ¶þ
+#    01: improve depth estimate by omiting the Indel lines;
+#    02: add an option '-d'(save degenerate bases);
+#    03: add an option '-Q'(SNP calling QUAL);
+#
+#Update: 6:57 2018-6-20
+#    01: try most avoid redundant bases;
+#    02: change missing base to gap (not N)
+#
+#Update: 11:43 2016/6/13
+#    01: print inf of depth into LOG file;
+#    02: only handle SNP even when INDEL exist
+################################################
 
 use File::Basename;
 use Getopt::Std;
 
 my %opts;
-my $update = "2018/06/20";
+my $update = "2019/04/02";
 my $softName = basename $0;
-getopts('hi:o:q:m:M:n:l:r',\%opts);
+getopts('hi:o:Q:q:m:M:n:l:rd',\%opts);
 die("
 Program for combining SNPs from filtered VCF to fasta.
 Common usage:
@@ -14,12 +28,14 @@ Common usage:
 Options:
     -i FILE   Input file name (in VCF[.gz] format)
     -o FILE   Output file name (in Fasta format)
-    -q INT    genotype quality threshold [10,no check if 0]
+    -Q INT    QUAL threshold [40]
+    -q INT    genotype quality threshold (10) [No check]
     -m INT    the min. depth allowed for a site [auto:2.5%]
     -M INT    the Max. depth allowed for a site [auto:97.5%]
-    -n INT    uncertained samples allowed per site [0]
+    -n INT    uncertained samples allowed at a site [0]
     -l INT    sequence length per line in output [60]
     -r        save the reference seq into the output
+    -d        output degenerate bases when heterogeneity exist [ALT]
     -h        Print this help message
 Version: $update.
 Author: Yan-Bo Sun.
@@ -27,18 +43,14 @@ Author: Yan-Bo Sun.
 
 ########################################
 print STDERR "\n===>Parameter parsing...\n";
-my $VCFFile = $opts{i};
-print STDERR "    Input VCFFile:\t$VCFFile\n";
-my $OutFasta = $opts{o};
-print STDERR "    Output Fasta:\t$OutFasta\n";
-my $qualityCutoff = defined $opts{q}?$opts{q}:10;
-print STDERR "    Genotype Quality Cutoff:\t$qualityCutoff\n";
-my $uncertainNumCutoff = defined $opts{n}?$opts{n}:0;
-print STDERR "    Max.NO. uncertained base:\t$uncertainNumCutoff\n";
-my $seqLen4line = defined $opts{l}?$opts{l}:60;
-print STDERR "    Out Seq Length per Line:\t$seqLen4line\n";
-my $saveRef = defined $opts{r}?'Yes':'No';
-print STDERR "    Whether save reference seq:\t$saveRef\n";
+my $VCFFile = $opts{i};print STDERR "    Input VCFFile:\t$VCFFile\n";
+my $OutFasta = $opts{o};print STDERR "    Output Fasta:\t$OutFasta\n";
+my $SNPQual = defined $opts{Q}?$opts{Q}:40;print STDERR "    SNP Calling Quality Cutoff:\t$SNPQual\n";
+my $qualityCutoff = defined $opts{q}?$opts{q}:0;print STDERR "    Genotype Quality Cutoff:\t$qualityCutoff\n";
+my $uncertainNumCutoff = defined $opts{n}?$opts{n}:0;print STDERR "    Max.NO. uncertained base:\t$uncertainNumCutoff\n";
+my $seqLen4line = defined $opts{l}?$opts{l}:60;print STDERR "    Out Seq Length per Line:\t$seqLen4line\n";
+my $saveRef = defined $opts{r}?'Yes':'No';print STDERR "    Whether save reference seq:\t$saveRef\n";
+my $degenerate = defined $opts{d}?"Yes":"No"; print STDERR "    Whether save degenerate bases:\t$degenerate\n";
 my ($minDepth,$maxDepth) = &estimateDepthCutoff();
 my ($index4GQ,%hashName) = &estimateIndex4GQ();
 my %hashBase = ('AG'=>'R','GA'=>'R','CT'=>'Y','TC'=>'Y','AC'=>'M','CA'=>'M',
@@ -48,7 +60,7 @@ my %hashBase = ('AG'=>'R','GA'=>'R','CT'=>'Y','TC'=>'Y','AC'=>'M','CA'=>'M',
 &main();
 ########################################
 sub estimateDepthCutoff{
-	print STDERR "\n===>Estimating depth cutoffs...";
+	print STDERR "\n===>Estimating depth cutoffs...\n";
 	my $time1 = time();
 	my ($depthL,$depthU);
 	if(defined $opts{m} and defined $opts{M}){
@@ -61,11 +73,15 @@ sub estimateDepthCutoff{
 			open handIN,"$VCFFile" or die $!;
 		}
 		my @depthList;
+		my $lineNum;
 		while(<handIN>){
 			chomp;
+			$lineNum++;
 			next if(/^#/);
 			my @cols = split(/\t/);
 			my $infor = $cols[7];
+			next if $cols[7] =~ /INDEL\;/; # pass if the line record is indel;
+			print STDERR "\r$lineNum    $cols[0]\t$cols[1]\t$cols[2]    ";
 			$infor =~ /DP=([0-9]+)/;
 			push @depthList,$1;
 		}
@@ -95,7 +111,8 @@ sub estimateIndex4GQ{
 	my ($GQindex,%hash);
 	my $check = -1;
 	while(<handIN>){
-		chomp;next if ($line =~ /^##/);
+		chomp;
+		next if ($line =~ /^##/);
 		my @cols = split(/\t/);
 		if(/^#/){
 			my $maxIndex = scalar(@cols)-1;
@@ -130,9 +147,13 @@ sub getBase4sample_1{
 		$base2add = $genotypeQuality < $qualityCutoff?'N':$refBase;
 	}elsif($genotype eq '1/1'){
 		$base2add = $genotypeQuality < $qualityCutoff?'N':$altBase;
-	}elsif($genotype eq '0/1'){
-		#my $tmp = $refBase.$altBase;$base2add = $hashBase{$tmp};
-		$base2add = $genotypeQuality < $qualityCutoff?'N':$altBase;
+	}elsif($genotype eq '0/1' or $genotype eq '1/0'){
+		if($degenerate eq "Yes"){
+			my $tmp = $refBase.$altBase;
+			$base2add = $genotypeQuality < $qualityCutoff?'N':$hashBase{$tmp};
+		}else{
+			$base2add = $genotypeQuality < $qualityCutoff?'N':$altBase;
+		}
 	}else{
 		$base2add = '-';
 	}
@@ -153,13 +174,21 @@ sub getBase4sample_2{
 		$base2add = $genotypeQuality < $qualityCutoff?"N":$altBase1;
 	}elsif($genotype eq '2/2'){
 		$base2add = $genotypeQuality < $qualityCutoff?"N":$altBase2;
-	}elsif($genotype eq '0/1'){
-		#my $tmp = $refBase.$altBase1;$base2add = $hashBase{$tmp};
-		$base2add = $genotypeQuality < $qualityCutoff?"N":$altBase1;
-	}elsif($genotype eq '0/2'){
-		#my $tmp = $refBase.$altBase2;$base2add = $hashBase{$tmp};
-		$base2add = $genotypeQuality < $qualityCutoff?"N":$altBase2;
-	}elsif($genotype eq '1/2'){
+	}elsif($genotype eq '0/1' or $genotype eq '1/0'){
+		if($degenerate eq "Yes"){
+			my $tmp = $refBase.$altBase1;
+			$base2add = $genotypeQuality < $qualityCutoff?"N":$hashBase{$tmp};
+		}else{
+			$base2add = $genotypeQuality < $qualityCutoff?"N":$altBase1;
+		}
+	}elsif($genotype eq '0/2' or $genotype eq '2/0'){
+		if($degenerate eq "Yes"){
+			my $tmp = $refBase.$altBase2;
+			$base2add = $genotypeQuality < $qualityCutoff?"N":$hashBase{$tmp};
+		}else{
+			$base2add = $genotypeQuality < $qualityCutoff?"N":$altBase2;
+		}
+	}elsif($genotype eq '1/2' or $genotype eq '2/1'){
 		my $tmp = $altBase1.$altBase2;
 		$base2add = $genotypeQuality < $qualityCutoff?"N":$hashBase{$tmp};
 	}else{
@@ -185,20 +214,32 @@ sub getBase4sample_3{
 		$base2add = $genotypeQuality < $qualityCutoff?"N":$altBase2;
 	}elsif($genotype eq '3/3'){
 		$base2add = $genotypeQuality < $qualityCutoff?"N":$altBase3;
-	}elsif($genotype eq '0/1'){
-		#my $tmp = $refBase.$altBase1;$base2add = $hashBase{$tmp};
-		$base2add = $genotypeQuality < $qualityCutoff?"N":$altBase1;
-	}elsif($genotype eq '0/2'){
-		#my $tmp = $refBase.$altBase2;$base2add = $hashBase{$tmp};
-		$base2add = $genotypeQuality < $qualityCutoff?"N":$altBase2;
-	}elsif($genotype eq '0/3'){
-		#my $tmp = $refBase.$altBase3;$base2add = $hashBase{$tmp};
-		$base2add = $genotypeQuality < $qualityCutoff?"N":$altBase3;
-	}elsif($genotype eq '1/2'){
+	}elsif($genotype eq '0/1' or $genotype eq '1/0'){
+		if($degenerate eq "Yes"){
+			my $tmp = $refBase.$altBase1;
+			$base2add = $genotypeQuality < $qualityCutoff?"N":$hashBase{$tmp};
+		}else{
+			$base2add = $genotypeQuality < $qualityCutoff?"N":$altBase1;
+		}
+	}elsif($genotype eq '0/2' or $genotype eq '2/0'){
+		if($degenerate == "Yes"){
+			my $tmp = $refBase.$altBase2;
+			$base2add = $genotypeQuality < $qualityCutoff?"N":$hashBase{$tmp};
+		}else{
+			$base2add = $genotypeQuality < $qualityCutoff?"N":$altBase2;
+		}
+	}elsif($genotype eq '0/3' or $genotype eq '3/0'){
+		if($degenerate eq "Yes"){
+			my $tmp = $refBase.$altBase3;
+			$base2add = $genotypeQuality < $qualityCutoff?"N":$hashBase{$tmp};
+		}else{
+			$base2add = $genotypeQuality < $qualityCutoff?"N":$altBase3;
+		}
+	}elsif($genotype eq '1/2' or $genotype eq '2/1'){
 		my $tmp = $altBase1.$altBase2;$base2add = $genotypeQuality < $qualityCutoff?"N":$hashBase{$tmp};
-	}elsif($genotype eq '1/3'){
+	}elsif($genotype eq '1/3' or $genotype eq '3/1'){
 		my $tmp = $altBase1.$altBase3;$base2add = $genotypeQuality < $qualityCutoff?"N":$hashBase{$tmp};
-	}elsif($genotype eq '2/3'){
+	}elsif($genotype eq '2/3' or $genotype eq '3/2'){
 		my $tmp = $altBase2.$altBase3;$base2add = $genotypeQuality < $qualityCutoff?"N":$hashBase{$tmp};
 	}else{
 		$base2add = '-';
@@ -260,6 +301,7 @@ sub main{
 		chomp;
 		next if (/^#/);
 		my @cols = split(/\t/);
+		next if $cols[5] < $SNPQual;
 		next if $cols[7] =~ /INDEL/; # pass if the line record is indel;
 		
 		my ($depth,$num4uncBase);
