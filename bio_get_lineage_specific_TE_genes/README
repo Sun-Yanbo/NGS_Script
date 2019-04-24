@@ -1,0 +1,20 @@
+###########################################
+#     bio_get_specific_TE_genes           #
+#           Version: 1.0.0                #
+###########################################
+-------------------------------------------
+bio_get_specific_TE_genes is a simple pipeline to identify lineage-specific Transposable Element derived genes (Molecular Domestication) through analyzing either CDS (coding regions of a gene) or cDNA sequences. It applies RepeatMasker to identify TE-like sequences in given genes, and uses Get_homologues to cluster the translated protein sequences into homologous groups, and then automately identify the lineage-specific  TE-derived genes by parsing all the results of clustering and TE idnetificaiton. The identified lineage-specific TE derived genes might be an important  resource for lineage-spefici adaptations/phenotypes.
+
+bio_get_specific_TE_genes is a Perl script writen by Yan-Bo Sun (State Key Laboratory of Genetic Resources and Evolution, Kunming Institute of Zoology, Chinese Academy of Sciences, Kunming 650223, China). Please feel free to contact sunyanbo@mail.kiz.ac.cn if you have any question when using this software.
+
+To use specTEG, just modify the specTEG configure file and then run it as below:
+
+	perl bio_get_specific_TE_genes.pl <bio_get_specific_TE_genes.config>
+
+-------------------------------------------
+
+Note on running specTEG:
+
+specTEG requires the installation of RepeatMasker with hmmer (v3.1).
+Please see http://www.repeatmasker.org/ for building RepeatMasker from source.
+
